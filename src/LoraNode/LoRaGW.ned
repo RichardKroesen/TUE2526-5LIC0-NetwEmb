@@ -3,15 +3,15 @@
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Lesser General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU Lesser General Public License
 // along with this program.  If not, see http://www.gnu.org/licenses/.
-// 
+//
 
 package flora.LoraNode;
 
@@ -49,10 +49,10 @@ module LoRaGW like INetworkNode
         bool hasUdp = default(firstAvailableOrEmpty("Udp") != "");
         string udpType = default(firstAvailableOrEmpty("UDP"));
 
-        LoRaGWNic.radio.antenna.mobilityModule = default("^.^.^.mobility");
+//        LoRaGWNic.radio.antenna.mobilityModule = default("^.^.^.mobility");
 
         *.mobilityModule = default(exists(mobility) ? absPath(".mobility") : "");
-        
+
         ethernet.registerProtocol = default(true);
 
         @display("bgb=783.96,587.688;i=device/antennatower");
@@ -142,7 +142,7 @@ module LoRaGW like INetworkNode
         cb.in++ <-- nl.out++;
         udp.ipOut --> tn.in++;
         udp.ipIn <-- tn.out++;
-        
+
         cb.out++ --> bridging.upperLayerIn if exists(bridging);
         bridging.upperLayerOut --> cb.in++ if exists(bridging);
 
