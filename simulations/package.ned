@@ -10,15 +10,43 @@ import inet.node.inet.StandardHost;
 import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
 import inet.node.ethernet.Eth1G;
 
+import inet.common.geometry.common.SimpleGeographicCoordinateSystem;
+import inet.visualizer.canvas.integrated.IntegratedCanvasVisualizer;
+
+//package inet.examples.openstreetmap;
+//
+//import inet.common.geometry.common.SimpleGeographicCoordinateSystem;
+//import inet.visualizer.canvas.integrated.IntegratedCanvasVisualizer;
+//
+//network OpenStreetMapExample
+//{
+//    submodules:
+//        visualizer: IntegratedCanvasVisualizer {
+//            parameters:
+//                @display("p=100,100");
+//        }
+//        coordinateSystem: SimpleGeographicCoordinateSystem {
+//            parameters:
+//                @display("p=100,200");
+//        }
+//}
+
+
 @license(LGPL);
 network LoRaNetworkTest
 {
+    //* Network Parameters: *//
     parameters:
-        int numberOfNodes = default(1);
-        int numberOfGateways = default(1);
-        int networkSizeX = default(500);
-        int networkSizeY = default(500);
-        @display("bgb=562,417");
+        int numberOfNodes = default(10);
+        int numberOfGateways = default(2);
+
+		//* Environment *//
+        int networkSizeX = default(100);
+        int networkSizeY = default(90);
+
+		// Background Bounds
+        @display("bgb=900,100");
+
     submodules:
         loRaNodes[numberOfNodes]: LoRaNode {
             @display("p=400,304");
@@ -47,6 +75,17 @@ network LoRaNetworkTest
         nsRouter: Router {
             @display("p=137,44");
         }
+
+		// Maps
+	    visualizer: IntegratedCanvasVisualizer {
+            parameters:
+                @display("p=100,100");
+        }
+        coordinateSystem: SimpleGeographicCoordinateSystem {
+            parameters:
+                @display("p=100,200");
+        }
+
     connections:
         networkServer.ethg++ <--> Eth1G <--> nsRouter.ethg++;
         nsRouter.pppg++ <--> Eth1G <--> internetCloud.pppg++;

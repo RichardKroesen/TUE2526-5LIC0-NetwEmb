@@ -1,4 +1,4 @@
-# TUE2526 5LIC0 Networked Embedded Systems Project
+# Networked Embedded Systems Project (5LIC0)
 This is a repository of our course Netwoked Embedded Systems project (5LIC0) at Technical University of Eindhoven. The course is scoped perticularly around Wireless Sensor Networks. 
 
 ## Background
