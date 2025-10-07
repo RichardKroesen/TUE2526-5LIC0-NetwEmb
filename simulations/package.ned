@@ -3,6 +3,7 @@ package flora.simulations;
 import flora.LoRaPhy.LoRaMedium;
 import flora.LoraNode.LoRaNode;
 import flora.LoraNode.LoRaGW;
+
 import inet.common.geometry.common.SimpleGeographicCoordinateSystem;
 import inet.visualizer.canvas.integrated.IntegratedCanvasVisualizer;
 
