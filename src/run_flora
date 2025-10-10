@@ -1,6 +1,6 @@
 #!/bin/bash
 if [ "$INET_ROOT" = "" ]; then
-  INET_ROOT=$(dirname $0)/../../inet4.3
+  INET_ROOT=/home/richard/omnetpp-6.2.0/samples/inet4.4
 fi
 
 PATH=$INET_ROOT/src:$PATH

@@ -129,6 +129,13 @@ void PacketForwarder::processLoraMACPacket(Packet *pk)
     EV << frame->getTransmitterAddress() << endl;
     //for (std::vector<nodeEntry>::iterator it = knownNodes.begin() ; it != knownNodes.end(); ++it)
 
+    // Check if we have any destination addresses configured
+    if (destAddresses.empty()) {
+        EV_ERROR << "No destination addresses configured for PacketForwarder. Dropping packet." << endl;
+        delete pk;
+        return;
+    }
+
     // FIXME : Identify network server message is destined for.
     L3Address destAddr = destAddresses[0];
     if (pk->getControlInfo())

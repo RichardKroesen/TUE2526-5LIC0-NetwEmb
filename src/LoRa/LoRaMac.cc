@@ -163,36 +163,9 @@ void LoRaMac::handleSelfMessage(cMessage *msg)
     EV << "received self message: " << msg << endl;
     handleWithFsm(msg);
 }
-#if 0
-void LoRaMac::handleUpperPacket(cMessage *msg)
-{
-    if(fsm.getState() != IDLE) {
-            error("Wrong, it should not happen erroneous state: %s", fsm.getStateName());
-    }
-    auto pkt = check_and_cast<Packet *>(msg);
 
-    pkt->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::lora);
-//    LoRaMacControlInfo *cInfo = check_and_cast<LoRaMacControlInfo *>(msg->getControlInfo());
-    auto pktEncap = encapsulate(pkt);
-
-    const auto &frame = pktEncap->peekAtFront<LoRaMacFrame>();
-
-    EV << "frame " << pktEncap << " received from higher layer, receiver = " << frame->getReceiverAddress() << endl;
-
-    txQueue->enqueuePacket(pktEncap);
-    if (fsm.getState() != IDLE)
-        EV << "deferring upper message transmission in " << fsm.getStateName() << " state\n";
-    else {
-        popTxQueue();
-        handleWithFsm(currentTxFrame);
-    }
-}
-#endif
 void LoRaMac::handleUpperPacket(Packet *packet)
 {
-    if(fsm.getState() != IDLE) {
-         error("Wrong, it should not happen erroneous state: %s", fsm.getStateName());
-    }
     packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::apskPhy);
 
     EV << "frame " << packet << " received from higher layer " << endl;
@@ -201,12 +174,26 @@ void LoRaMac::handleUpperPacket(Packet *packet)
     if (frame == nullptr)
         throw cRuntimeError("Header LoRaMacFrame not found");
 
+    // Check if we're not in IDLE state or if there's already a transmission in progress
+    if (fsm.getState() != IDLE) {
+        EV << "MAC not in IDLE state (" << fsm.getStateName() << "), queueing packet" << endl;
+        txQueue->enqueuePacket(pktEncap);
+        return;
+    }
+
+    // Check if radio is currently transmitting
+    if (radio->getTransmissionState() == IRadio::TRANSMISSION_STATE_TRANSMITTING) {
+        EV << "Radio is busy transmitting, queueing packet" << endl;
+        txQueue->enqueuePacket(pktEncap);
+        return;
+    }
+
     if (currentTxFrame != nullptr)
         throw cRuntimeError("Model error: incomplete transmission exists");
+        
     currentTxFrame = pktEncap;
     handleWithFsm(currentTxFrame);
 }
-
 
 void LoRaMac::handleLowerPacket(Packet *msg)
 {

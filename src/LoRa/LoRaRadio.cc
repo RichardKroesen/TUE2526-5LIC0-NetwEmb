@@ -181,6 +181,14 @@ void LoRaRadio::handleUpperPacket(Packet *packet)
 {
     emit(packetReceivedFromUpperSignal, packet);
     if (isTransmitterMode(radioMode)) {
+        // Check if already transmitting - if so, drop the packet gracefully
+        if (transmissionTimer->isScheduled()) {
+            EV_WARN << "Received frame from upper layer while already transmitting. Dropping packet." << endl;
+            emit(droppedPacket, 0);
+            delete packet;
+            return;
+        }
+        
         auto tag = packet->removeTag<LoRaTag>();
         auto preamble = makeShared<LoRaPhyPreamble>();
 
@@ -199,8 +207,6 @@ void LoRaRadio::handleUpperPacket(Packet *packet)
         preamble->setChunkLength(b(16));
         packet->insertAtFront(preamble);
 
-        if (transmissionTimer->isScheduled())
-            throw cRuntimeError("Received frame from upper layer while already transmitting.");
         if (separateTransmissionParts)
             startTransmission(packet, IRadioSignal::SIGNAL_PART_PREAMBLE);
         else
