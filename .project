@@ -3,7 +3,7 @@
 	<name>WLAM_Research</name>
 	<comment></comment>
 	<projects>
-		<project>inet4.4</project>
+		<project>inet-4.4.0</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>
