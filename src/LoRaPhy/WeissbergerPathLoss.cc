@@ -23,9 +23,9 @@ class WeissbergerPathLoss : public FreeSpacePathLoss
 {
   protected:
     /**  Computes total path loss = FSPL + vegetation loss  **/
-    virtual double computePathLoss(mps distance, Hz frequency) const override {
+    virtual double computePathLoss(mps propagationSpeed, Hz frequency, m distance) const override {
         // --- 1. Free-space path loss from parent ---
-        double fspl = FreeSpacePathLoss::computePathLoss(distance, frequency);
+        double fspl = FreeSpacePathLoss::computePathLoss(propagationSpeed, frequency, distance);
 
         // --- 2. Retrieve vegetation depth parameter (in metres) ---
         // You can assign this per-simulation, per-region, or per-link.
