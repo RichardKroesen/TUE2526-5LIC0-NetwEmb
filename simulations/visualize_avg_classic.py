@@ -18,16 +18,23 @@ signal_mapping = {
     "queueBitLength:vector": "queue_bits",
     "powerConsumption:vector": "energy",
     "residualEnergyCapacity:vector": "residual_energy",
-    "incomingDataRate:vector": "rx_rate",
+    "incomingDataRate:vector": "rx_rate",  
     "outgoingDataRate:vector": "tx_rate",
     "incomingPacketLengths:vector": "rx_packets",
     "outgoingPacketLengths:vector": "tx_packets",
     "temperature:vector": "temperature",
     "humidity:vector": "humidity",
     "no2:vector": "no2",
+    "counter:vector": "counter", 
     "queueingTime:vector": "queue_time",
     "transmissionState:vector": "tx_state",
     "receptionState:vector": "rx_state",
+}
+
+NODE_EXCLUDED_SIGNALS = {
+    "incomingDataRate:vector",
+    "incomingPacketLengths:vector",
+    "flowIncomingDataRate:vector"
 }
 
 # ---------- LOAD AGGREGATED JSON ----------
@@ -45,6 +52,8 @@ for node_id, signals in node_stats.items():
     for signal, stats in signals.items():
         metric = signal_mapping.get(signal)
         if not metric:
+            continue
+        if signal in NODE_EXCLUDED_SIGNALS and not node_id.startswith("GW"):
             continue
         rows.append({
             "node": int(node_id),
