@@ -37,3 +37,8 @@ simulations/**/valgrind.out
 simulations/**/log.txt
 
 .venv/
+app/__pycache__/*
+
+simulations/omnetpp*.ini
+simulations/temp_results*/
+experiments/*
