@@ -16,10 +16,9 @@ The decision is made to a utilize simulation platform for initial network design
 
 This section provides usage instructions of the experimental setup that is used for simulation environment creation and doing experiments in a structured manner. The simulation setup is LoRa-based Wireless Sensor Networks (WSNs) using the FLoRa framework and Python scripts for data collection automation, analysis, and visualization.
 
-> [!WARNING]  
-
-RUNNING SIMULATIONS MAY TAKE A LONG TIME AND CONSUME SIGNIFICANT COMPUTATIONAL RESOURCES. ENSURE YOUR YOU HAVE ENOUGH DISK SPACE AND BEFORE INITIATING TIME-SENSITIVE EXPERIMENTS. 
-As an example running 1 day of experiment with 100 nodes takes 2.3 GB of disk space and around 10 minutes of processing (estimation not verified, since I run multilple experiments in parallel). Keep this in mind when starting a longer experiment configuration. 
+> [!WARNING]
+> RUNNING SIMULATIONS MAY TAKE A LONG TIME AND CONSUME SIGNIFICANT COMPUTATIONAL RESOURCES. ENSURE YOUR YOU HAVE ENOUGH DISK SPACE AND BEFORE INITIATING TIME-SENSITIVE EXPERIMENTS. 
+> As an example running 1 day of experiment with 100 nodes takes 2.3 GB of disk space and around 10 minutes of processing (estimation not verified, since I run multilple experiments in parallel). Keep this in mind when starting a longer experiment configuration. 
 
 ## 1) Building and Running FLoRa Simulations
 
