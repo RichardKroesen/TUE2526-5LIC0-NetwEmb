@@ -37,7 +37,7 @@ MAX_PARALLEL = 8
 CHUNK_SIZE_MB = 512
 # ----------------------------------------------
 
-node_pattern = re.compile(r"(?:loRaNodes|node)\[(\d+)\]", re.IGNORECASE)
+node_pattern = re.compile(r"(?:loRaNodes|loRaGW|node)\[(\d+)\]", re.IGNORECASE)
 
 def safe_stats_calculation(values):
     """
