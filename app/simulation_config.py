@@ -18,6 +18,7 @@ import re
 import multiprocessing as mp
 from collections import defaultdict
 import numpy as np
+import warnings
 
 # ---------------- GLOBAL CONFIG ----------------
 # These paths can be modified globally in main.py
@@ -37,6 +38,89 @@ CHUNK_SIZE_MB = 512
 # ----------------------------------------------
 
 node_pattern = re.compile(r"(?:loRaNodes|node)\[(\d+)\]", re.IGNORECASE)
+
+def safe_stats_calculation(values):
+    """
+    Safely calculate statistics, handling overflow and extreme values
+    """
+    if not values:
+        return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "count": 0}
+    
+    try:
+        # Convert to numpy array and filter out inf/nan values
+        values_array = np.array(values, dtype=np.float64)
+        finite_mask = np.isfinite(values_array)
+        finite_values = values_array[finite_mask]
+        
+        if len(finite_values) == 0:
+            # All values are inf/nan
+            return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "count": 0}
+        
+        # Check for extremely large values that might cause overflow
+        max_safe_value = 1e100  # Reasonable threshold to prevent overflow
+        if np.any(np.abs(finite_values) > max_safe_value):
+            # Use log-scale statistics for extremely large values
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                log_values = np.log10(np.abs(finite_values) + 1e-300)  # Add small epsilon to avoid log(0)
+                
+                mean_log = float(np.mean(log_values))
+                std_log = float(np.std(log_values))
+                min_log = float(np.min(log_values))
+                max_log = float(np.max(log_values))
+                
+                # Convert back from log scale (approximate)
+                return {
+                    "mean": float(10 ** mean_log if mean_log < 100 else np.mean(finite_values)),
+                    "std": float(10 ** std_log if std_log < 100 and not np.isinf(std_log) else 0.0),
+                    "min": float(np.min(finite_values)),
+                    "max": float(np.max(finite_values)),
+                    "count": len(finite_values),
+                    "log_scale_used": True
+                }
+        
+        # Normal calculation for reasonable values
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            mean_val = float(np.mean(finite_values))
+            std_val = float(np.std(finite_values))
+            min_val = float(np.min(finite_values))
+            max_val = float(np.max(finite_values))
+            
+            # Check for overflow in results
+            if not np.isfinite(std_val):
+                std_val = 0.0
+            if not np.isfinite(mean_val):
+                mean_val = 0.0
+                
+            return {
+                "mean": mean_val,
+                "std": std_val,
+                "min": min_val,
+                "max": max_val,
+                "count": len(finite_values)
+            }
+            
+    except Exception as e:
+        # Fallback to basic statistics if numpy fails
+        try:
+            finite_values = [v for v in values if np.isfinite(v)]
+            if not finite_values:
+                return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "count": 0}
+            
+            mean_val = sum(finite_values) / len(finite_values)
+            variance = sum((x - mean_val) ** 2 for x in finite_values) / len(finite_values)
+            std_val = variance ** 0.5 if variance >= 0 else 0.0
+            
+            return {
+                "mean": float(mean_val),
+                "std": float(std_val),
+                "min": float(min(finite_values)),
+                "max": float(max(finite_values)),
+                "count": len(finite_values)
+            }
+        except:
+            return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "count": 0}
 
 class SimulationConfig:
     def __init__(self, simulations_dir=None, experiments_dir=None, 
@@ -218,11 +302,23 @@ class SimulationConfig:
                         processed_data["scalar_stats"] = {}
                     processed_data["scalar_stats"][rep_dir.name] = scalar_stats
         
+        # Aggregate repetitions if we have multiple repetitions
+        if len(processed_data.get("vector_stats", {})) > 1:
+            aggregated_stats = self._aggregate_repetitions(processed_data["vector_stats"])
+            processed_data["aggregated_vector_stats"] = aggregated_stats
+        
         # Save processed data
         if len(processed_data) > 1:  # More than just simulation name
             output_json = config_dir / "processed_results.json"
             with open(output_json, "w") as f:
                 json.dump(processed_data, f, indent=2)
+            
+            # Also save aggregated results separately for easy access
+            if "aggregated_vector_stats" in processed_data:
+                aggregated_json = config_dir / "aggregated_vector_stats.json"
+                with open(aggregated_json, "w") as f:
+                    json.dump(processed_data["aggregated_vector_stats"], f, indent=2)
+            
             print(f"✅ Processed data saved for {sim_name}")
         else:
             print(f"⚠️  No results found for {sim_name}")
@@ -329,6 +425,265 @@ class SimulationConfig:
                             continue
         
         return scalar_stats
+
+    def _parse_chunk(self, path, start, end, vector_info):
+        """Parse a chunk of vector file for parallel processing"""
+        vector_stats = defaultdict(lambda: {"count":0,"sum":0.0,"min":float('inf'),"max":float('-inf')})
+        node_stats = defaultdict(lambda: defaultdict(lambda: {"count":0,"sum":0.0,"min":float('inf'),"max":float('-inf')}))
+        
+        with open(path, "rb") as f:
+            f.seek(start)
+            if start != 0: 
+                f.readline()  # Skip partial line at start
+                
+            while f.tell() < end:
+                line = f.readline()
+                if not line: 
+                    break
+                    
+                line = line.decode(errors="ignore").strip()
+                if not line or line.startswith("vector "):
+                    continue
+                    
+                parts = line.split()
+                if len(parts) < 4 or not parts[0].isdigit():
+                    continue
+                    
+                try: 
+                    vec_id, value = int(parts[0]), float(parts[3])
+                except ValueError: 
+                    continue
+                    
+                if vec_id not in vector_info:
+                    continue
+                    
+                module, signal = vector_info[vec_id]
+                
+                # Update vector-level stats
+                vstats = vector_stats[vec_id]
+                vstats["count"] += 1
+                vstats["sum"] += value
+                vstats["min"] = min(vstats["min"], value)
+                vstats["max"] = max(vstats["max"], value)
+                
+                # Update node-level stats
+                node_match = node_pattern.search(module)
+                if node_match:
+                    node_id = int(node_match.group(1))
+                    nstats = node_stats[node_id][signal]
+                    nstats["count"] += 1
+                    nstats["sum"] += value
+                    nstats["min"] = min(nstats["min"], value)
+                    nstats["max"] = max(nstats["max"], value)
+        
+        return dict(vector_stats), {str(k): dict(v) for k,v in node_stats.items()}, 0
+
+    def _parse_repetition_chunked(self, vec_path):
+        """Parse a vector file using chunked parallel processing"""
+        vector_info = {}
+        
+        # First pass: read vector definitions
+        with open(vec_path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if line.startswith("vector "):
+                    parts = line.strip().split()
+                    if len(parts) >= 4:
+                        vec_id = int(parts[1])
+                        vector_info[vec_id] = (parts[2], parts[3])
+        
+        # Second pass: process data in chunks
+        file_size = os.path.getsize(vec_path)
+        chunk_size = CHUNK_SIZE_MB * 1024 * 1024
+        offsets = list(range(0, file_size, chunk_size))
+        chunks = [(s, min(s + chunk_size, file_size)) for s in offsets]
+        
+        cpu_count = min(mp.cpu_count(), len(chunks))
+        with mp.Pool(cpu_count) as pool:
+            results = pool.starmap(self._parse_chunk, [(vec_path, s, e, vector_info) for s, e in chunks])
+        
+        # Aggregate chunk results
+        final_vector_stats = defaultdict(lambda: {"count":0,"sum":0.0,"min":float('inf'),"max":float('-inf')})
+        final_node_stats = defaultdict(lambda: defaultdict(lambda: {"count":0,"sum":0.0,"min":float('inf'),"max":float('-inf')}))
+        
+        for vstats, nstats, _ in results:
+            # Aggregate vector stats
+            for vid, s in vstats.items():
+                fvs = final_vector_stats[vid]
+                fvs["count"] += s["count"]
+                fvs["sum"] += s["sum"]
+                fvs["min"] = min(fvs["min"], s["min"])
+                fvs["max"] = max(fvs["max"], s["max"])
+            
+            # Aggregate node stats
+            for nid, signals in nstats.items():
+                for sig, s in signals.items():
+                    ns = final_node_stats[nid][sig]
+                    ns["count"] += s["count"]
+                    ns["sum"] += s["sum"]
+                    ns["min"] = min(ns["min"], s["min"])
+                    ns["max"] = max(ns["max"], s["max"])
+        
+        return final_vector_stats, final_node_stats, vector_info
+
+    def _aggregate_repetitions(self, vector_stats_by_rep):
+        """Aggregate vector statistics across multiple repetitions"""
+        if not vector_stats_by_rep:
+            return {}
+        
+        # Collect all node statistics from all repetitions
+        all_reps_node_stats = []
+        vector_info_global = {}
+        
+        for rep_id, rep_data in vector_stats_by_rep.items():
+            if "node_stats" in rep_data:
+                all_reps_node_stats.append(rep_data["node_stats"])
+            if "vector_info" in rep_data:
+                vector_info_global = rep_data["vector_info"]
+        
+        if not all_reps_node_stats:
+            return {}
+        
+        # Aggregate node statistics across repetitions
+        aggregated_node_stats = defaultdict(dict)
+        
+        # Get all unique node IDs and signals from first repetition
+        first_rep = all_reps_node_stats[0]
+        
+        for node_id in first_rep.keys():
+            for signal in first_rep[node_id].keys():
+                values = []
+                
+                # Collect values from all repetitions
+                for rep_stats in all_reps_node_stats:
+                    if node_id in rep_stats and signal in rep_stats[node_id]:
+                        stats = rep_stats[node_id][signal]
+                        if stats.get("count", 0) > 0:
+                            # Use mean if available, otherwise compute from sum/count
+                            if "mean" in stats:
+                                values.append(stats["mean"])
+                            elif stats["count"] > 0:
+                                values.append(stats["sum"] / stats["count"])
+                
+                # Compute aggregated statistics
+                if values:
+                    stats = safe_stats_calculation(values)
+                    stats["repetitions"] = len(all_reps_node_stats)
+                    aggregated_node_stats[node_id][signal] = stats
+        
+        return {
+            "vector_info": vector_info_global,
+            "aggregated_node_stats": {str(k): v for k, v in aggregated_node_stats.items()},
+            "repetitions": list(vector_stats_by_rep.keys()),
+            "total_repetitions": len(all_reps_node_stats)
+        }
+
+    def aggregate_setup_results(self, setup_name, setup_path=None):
+        """Aggregate results for a specific setup across repetitions (for large files)"""
+        if setup_path is None:
+            setup_path = self.flora_root / RESULTS_DIR / setup_name
+        
+        if not setup_path.exists():
+            print(f"❌ Setup path not found: {setup_path}")
+            return
+        
+        # Check if aggregated results already exist
+        aggregated_file = setup_path / "aggregated_vector_stats.json"
+        if aggregated_file.exists():
+            print(f"✅ Aggregated results already exist for {setup_name}")
+            try:
+                with open(aggregated_file, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"⚠️  Error reading existing aggregated results: {e}")
+        
+        # Find all repetition directories
+        repetitions = sorted([f.name for f in setup_path.iterdir() if f.is_dir() and f.name.isdigit()])
+        
+        if not repetitions:
+            print(f"❌ No repetition directories found in {setup_path}")
+            return
+        
+        print(f"📊 Aggregating {len(repetitions)} repetitions for {setup_name}...")
+        
+        all_reps_node_stats = []
+        vector_info_global = {}
+        
+        # Process each repetition using chunked parsing for large files
+        for rep in repetitions:
+            vec_path = setup_path / rep / "vectors.vec"
+            if vec_path.exists():
+                try:
+                    # Use chunked parsing for large vector files
+                    vstats, nstats, vector_info = self._parse_repetition_chunked(vec_path)
+                    
+                    # Convert to the same format as lightweight processing
+                    formatted_nstats = {}
+                    for node_id, signals in nstats.items():
+                        formatted_nstats[str(node_id)] = {}
+                        for signal, stats in signals.items():
+                            if stats["count"] > 0:
+                                formatted_nstats[str(node_id)][signal] = {
+                                    "count": stats["count"],
+                                    "mean": stats["sum"] / stats["count"],
+                                    "min": stats["min"] if stats["min"] != float('inf') else 0,
+                                    "max": stats["max"] if stats["max"] != float('-inf') else 0,
+                                    "sum": stats["sum"]
+                                }
+                    
+                    all_reps_node_stats.append(formatted_nstats)
+                    vector_info_global = {str(k): v for k, v in vector_info.items()}
+                    
+                except Exception as e:
+                    print(f"⚠️  Error processing repetition {rep}: {e}")
+                    continue
+        
+        if not all_reps_node_stats:
+            print(f"❌ No valid repetition data found for {setup_name}")
+            return
+        
+        # Aggregate across repetitions
+        aggregated_node_stats = defaultdict(dict)
+        
+        # Get all unique node IDs and signals
+        all_nodes = set()
+        all_signals = set()
+        for rep_stats in all_reps_node_stats:
+            all_nodes.update(rep_stats.keys())
+            for node_stats in rep_stats.values():
+                all_signals.update(node_stats.keys())
+        
+        # Compute aggregated statistics
+        for node_id in all_nodes:
+            for signal in all_signals:
+                values = []
+                
+                # Collect values from all repetitions
+                for rep_stats in all_reps_node_stats:
+                    if node_id in rep_stats and signal in rep_stats[node_id]:
+                        stats = rep_stats[node_id][signal]
+                        if stats.get("count", 0) > 0:
+                            values.append(stats["mean"])
+                
+                # Compute aggregated statistics
+                if values:
+                    stats = safe_stats_calculation(values)
+                    stats["repetitions"] = len(all_reps_node_stats)
+                    aggregated_node_stats[node_id][signal] = stats
+        
+        # Save aggregated results
+        output_json = setup_path / "aggregated_vector_stats.json"
+        aggregated_data = {
+            "vector_info": vector_info_global,
+            "aggregated_node_stats": {str(k): v for k, v in aggregated_node_stats.items()},
+            "repetitions": repetitions,
+            "total_repetitions": len(all_reps_node_stats)
+        }
+        
+        with open(output_json, "w") as f:
+            json.dump(aggregated_data, f, indent=2)
+        
+        print(f"✅ Aggregated JSON saved for setup '{setup_name}' at {output_json}")
+        return aggregated_data
 
     def _process_result(self, result):
         """Process a single simulation result"""
@@ -557,6 +912,9 @@ class SimulationConfig:
             if success:
                 # Process results from temporary location
                 self._process_simulation_results(Path(temp_out_dir), config_dir, sim_name)
+                
+                # Aggregation is already handled in _process_simulation_results
+                # No need for additional aggregation step here
             
             # Clean up temporary directory
             if os.path.exists(temp_out_dir):
@@ -722,6 +1080,10 @@ class SimulationConfig:
             # Run simulations
             results = self.run_batch_simulations(configs, max_workers, experiment_dir)
             
+            # Aggregate results across the entire experiment
+            print("\n📊 Aggregating experiment results...")
+            self.aggregate_experiment_results(experiment_dir)
+            
             # Update experiment info with results
             successful = sum(1 for r in results if r["success"])
             failed = len(results) - successful
@@ -778,6 +1140,37 @@ class SimulationConfig:
         
         return sim_dirs
 
+    def run_aggregation_only(self, setup_name=None):
+        """Run aggregation on existing simulation results"""
+        results_path = self.flora_root / RESULTS_DIR
+        if not results_path.exists():
+            print("❌ No results directory found")
+            return
+        
+        if setup_name:
+            # Aggregate specific setup
+            setup_path = results_path / setup_name
+            if setup_path.exists():
+                print(f"📊 Aggregating results for {setup_name}...")
+                self.aggregate_setup_results(setup_name, setup_path)
+            else:
+                print(f"❌ Setup {setup_name} not found")
+        else:
+            # Aggregate all setups
+            sim_dirs = [item.name for item in results_path.iterdir() if item.is_dir() and not item.name.startswith('.')]
+            if not sim_dirs:
+                print("📁 No simulation results found")
+                return
+            
+            print(f"📊 Aggregating results for {len(sim_dirs)} setups...")
+            for sim_dir in sim_dirs:
+                try:
+                    self.aggregate_setup_results(sim_dir, results_path / sim_dir)
+                except Exception as e:
+                    print(f"⚠️  Error aggregating {sim_dir}: {e}")
+            
+            print("✅ Aggregation completed for all setups")
+
     def cleanup_results(self, pattern=None):
         """Clean up simulation results matching pattern"""
         results_path = self.flora_root / RESULTS_DIR
@@ -805,6 +1198,53 @@ class SimulationConfig:
             shutil.rmtree(dir_path)
         
         print("✅ Cleanup completed")
+
+    def aggregate_experiment_results(self, experiment_dir):
+        """Collect and consolidate already-aggregated results from all setups in an experiment directory"""
+        experiment_path = Path(experiment_dir)
+        if not experiment_path.exists():
+            print(f"❌ Experiment directory not found: {experiment_path}")
+            return
+        
+        # Find all setup directories (SF*_TP*_N*_GW*)
+        setup_dirs = []
+        for item in experiment_path.iterdir():
+            if item.is_dir() and item.name.startswith("SF"):
+                setup_dirs.append(item.name)
+        
+        if not setup_dirs:
+            print(f"❌ No setup directories found in {experiment_path}")
+            return
+        
+        print(f"📊 Collecting aggregated results from {len(setup_dirs)} setups...")
+        
+        aggregated_results = {}
+        
+        for setup_name in setup_dirs:
+            setup_path = experiment_path / setup_name
+            aggregated_file = setup_path / "aggregated_vector_stats.json"
+            
+            if aggregated_file.exists():
+                try:
+                    with open(aggregated_file, "r") as f:
+                        aggregated_data = json.load(f)
+                    aggregated_results[setup_name] = aggregated_data
+                    print(f"   ✅ Collected {setup_name}")
+                except Exception as e:
+                    print(f"   ⚠️  Error reading {setup_name}: {e}")
+            else:
+                print(f"   ⚠️  No aggregated results found for {setup_name}")
+        
+        # Save experiment-wide aggregated results
+        if aggregated_results:
+            experiment_aggregated_path = experiment_path / "experiment_aggregated_results.json"
+            with open(experiment_aggregated_path, "w") as f:
+                json.dump(aggregated_results, f, indent=2)
+            
+            print(f"✅ Experiment aggregation completed! Results saved to {experiment_aggregated_path}")
+            print(f"   Successfully collected {len(aggregated_results)}/{len(setup_dirs)} setups")
+        else:
+            print("❌ No aggregated results could be collected")
 
 if __name__ == "__main__":
     # Test configuration
